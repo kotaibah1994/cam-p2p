@@ -99,6 +99,7 @@
         const BROADCASTER_ID = "surveillance_camera_001";
         let peer = null;
         let currentStream = null;
+        let connectionTimeout = null;
 
         // إعدادات الجودة المختلفة
         const qualityProfiles = {
@@ -168,19 +169,28 @@
             startBtn.disabled = true;
             qualitySelect.disabled = true;
 
+            // تحقق من تحميل مكتبة PeerJS
+            if (typeof Peer === 'undefined') {
+                statusEl.textContent = '❌ خطأ: لم يتم تحميل مكتبة PeerJS. تحقق من الاتصال بالإنترنت.';
+                statusEl.style.color = 'red';
+                startBtn.disabled = false;
+                qualitySelect.disabled = false;
+                return;
+            }
+
             navigator.mediaDevices.getUserMedia(constraints)
                 .then(function(stream) {
                     currentStream = stream;
                     localVideo.srcObject = stream;
                     
-                    // الحل 1: استخدام الخادم الرسمي لـ PeerJS مع إعدادات محسنة
+                    // الحل 2: استخدام خادم إشارة بديل
                     peer = new Peer(BROADCASTER_ID, {
-                        host: '0.peerjs.com',         // الخادم الرسمي
-                        port: 443,                   // منفذ HTTPS
-                        path: '/',                   المسار
-                        secure: true,                // استخدام HTTPS
-                        debug: 3,                    // مستوى التصحيح
-                        config: {                    // إعدادات ICE servers
+                        host: 'signaling.herokuapp.com',  // الخادم البديل
+                        port: 443,
+                        path: '/',
+                        secure: true,
+                        debug: 3,
+                        config: {
                             iceServers: [
                                 { 
                                     urls: [
@@ -192,14 +202,26 @@
                         }
                     });
 
+                    // إضافة timeout لمنع التجمد
+                    connectionTimeout = setTimeout(() => {
+                        if (peer && !peer.disconnected) {
+                            statusEl.innerHTML = '⏰ <strong>مهلة الاتصال انتهت</strong><br>الخادم لا يستجيب. جرب تحديث الصفحة.';
+                            statusEl.style.color = 'orange';
+                            stopBroadcast();
+                        }
+                    }, 15000); // 15 ثانية
+
                     peer.on('open', function(id) {
+                        clearTimeout(connectionTimeout);
                         statusEl.innerHTML = "✅ <strong>البث نشط!</strong><br>جودة: " + qualityDescriptions[quality] + "<br>جاهز للاستقبال";
                         statusEl.style.color = 'green';
                         stopBtn.disabled = false;
+                        console.log('✅ Connected to signaling server. ID:', id);
                     });
 
                     peer.on('error', function(err) {
-                        console.error('خطأ في PeerJS:', err);
+                        clearTimeout(connectionTimeout);
+                        console.error('❌ PeerJS error:', err);
                         statusEl.innerHTML = "❌ <strong>خطأ في الاتصال:</strong> " + err.type + "<br>جرب تحديث الصفحة";
                         statusEl.style.color = 'red';
                         stopBroadcast();
@@ -210,8 +232,13 @@
                         statusEl.style.color = 'orange';
                     });
 
+                    peer.on('close', function() {
+                        console.log('🔌 Peer connection closed');
+                    });
+
                 })
                 .catch(function(err) {
+                    clearTimeout(connectionTimeout);
                     statusEl.innerHTML = "❌ <strong>خطأ:</strong> " + err.name + "<br>" + err.message;
                     statusEl.style.color = 'red';
                     startBtn.disabled = false;
@@ -222,6 +249,8 @@
 
         // إيقاف البث
         function stopBroadcast() {
+            clearTimeout(connectionTimeout);
+            
             if (currentStream) {
                 currentStream.getTracks().forEach(track => track.stop());
                 currentStream = null;
@@ -242,9 +271,11 @@
 
         // إغلاق البث عند مغادرة الصفحة
         window.addEventListener('beforeunload', stopBroadcast);
+        window.addEventListener('pagehide', stopBroadcast);
         
         // تهيئة أولية
         updateQualityInfo();
+        console.log('✅ Page loaded successfully');
     </script>
 </body>
 </html>
