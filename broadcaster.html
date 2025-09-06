@@ -5,61 +5,136 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         body { font-family: Arial, sans-serif; text-align: center; margin: 20px; }
-        video { width: 100%; max-width: 400px; border: 1px solid #ccc; border-radius: 5px; }
+        video { width: 100%; max-width: 400px; border: 1px solid #ccc; border-radius: 5px; margin: 10px 0; }
         #status { color: #666; margin: 10px; }
+        .control-group { margin: 15px 0; }
+        select, button { padding: 10px; margin: 5px; border-radius: 5px; border: 1px solid #ccc; }
+        button { background: #007bff; color: white; border: none; cursor: pointer; }
+        button:disabled { background: #ccc; }
     </style>
 </head>
 <body>
 
     <h2>وضع البث 🎥</h2>
     <p>سيتم بث كاميرا الهاتف الآن.</p>
+    
+    <div class="control-group">
+        <label for="qualitySelect">اختر جودة البث: </label>
+        <select id="qualitySelect">
+            <option value="high">عالية (HD)</option>
+            <option value="medium" selected>متوسطة (متوازنة)</option>
+            <option value="low">منخفضة (للالإنترنت الضعيف)</option>
+            <option value="audioOnly">الصوت فقط</option>
+        </select>
+    </div>
+    
+    <button id="startBtn">بدء البث</button>
+    <button id="stopBtn" disabled>إيقاف البث</button>
+    
     <video id="localVideo" autoplay muted playsinline></video>
-    <p id="status">جاري التهيئة...</p>
+    <p id="status">اختر الجودة ثم اضغط "بدء البث".</p>
 
-    <!-- تحميل مكتبة PeerJS من CDN -->
     <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
     <script>
-        // عناصر DOM
         const statusEl = document.getElementById('status');
         const localVideo = document.getElementById('localVideo');
-
-        // معرف ثابت للباثن (سيتصل به المستقبل)
+        const qualitySelect = document.getElementById('qualitySelect');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        
         const BROADCASTER_ID = "surveillance_camera_001";
+        let peer = null;
+        let currentStream = null;
 
-        // الاتصال بخادم الإشارة البديل
-        const peer = new Peer(BROADCASTER_ID, {
-            host: 'peerjs-server-0yb0.onrender.com', // خادم إشارة بديل
-            port: 443,
-            path: '/',
-            secure: true,
-            debug: 3
-        });
+        // إعدادات الجودة المختلفة
+        const qualityProfiles = {
+            high: {
+                video: { width: 1280, height: 720, frameRate: 30 },
+                audio: true
+            },
+            medium: {
+                video: { width: 640, height: 480, frameRate: 20 },
+                audio: true
+            },
+            low: {
+                video: { width: 320, height: 240, frameRate: 15 },
+                audio: true
+            },
+            audioOnly: {
+                video: false,
+                audio: true
+            }
+        };
 
-        // عند الاتصال成功的يخادم الإشارة
-        peer.on('open', function(id) {
+        startBtn.addEventListener('click', startBroadcast);
+        stopBtn.addEventListener('click', stopBroadcast);
+
+        function startBroadcast() {
+            const quality = qualitySelect.value;
+            const constraints = qualityProfiles[quality];
+            
             statusEl.textContent = "جاري تشغيل الكاميرا...";
-            console.log('جهاز البث متصل. الـ ID هو: ', id);
+            startBtn.disabled = true;
+            qualitySelect.disabled = true;
 
-            // طلب الوصول إلى الكاميرا
-            navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+            navigator.mediaDevices.getUserMedia(constraints)
                 .then(function(stream) {
-                    // عرض البث على الشاشة للمستخدم (اختياري)
+                    currentStream = stream;
                     localVideo.srcObject = stream;
-                    statusEl.textContent = "الكاميرا نشطة وجاهزة للبث. ✅";
-                    statusEl.style.color = 'green';
+                    
+                    // تهيئة PeerJS مع الخادم
+                    peer = new Peer(BROADCASTER_ID, {
+                        host: 'peerjs-server-0yb0.onrender.com',
+                        port: 443,
+                        path: '/',
+                        secure: true,
+                        debug: 2
+                    });
+
+                    peer.on('open', function(id) {
+                        statusEl.textContent = `البث نشط (${quality}) - جاهز للاستقبال ✅`;
+                        statusEl.style.color = 'green';
+                        stopBtn.disabled = false;
+                        console.log('Broadcaster ID:', id);
+                    });
+
+                    peer.on('error', function(err) {
+                        console.error('PeerJS error:', err);
+                        statusEl.textContent = "خطأ في الاتصال: " + err.type;
+                        statusEl.style.color = 'red';
+                    });
+
                 })
                 .catch(function(err) {
-                    statusEl.textContent = "خطأ: لا يمكن الوصول إلى الكاميرا. " + err.message;
+                    statusEl.textContent = "خطأ: " + err.message;
                     statusEl.style.color = 'red';
-                    console.error('خطأ في الوصول إلى الكاميرا:', err);
+                    startBtn.disabled = false;
+                    qualitySelect.disabled = false;
+                    console.error('Error accessing media:', err);
                 });
-        });
+        }
 
-        peer.on('error', function(err) {
-            console.error('خطأ في PeerJS:', err);
-            statusEl.textContent = "حدث خطأ في الاتصال. يرجى تحديث الصفحة.";
-            statusEl.style.color = 'red';
-        });
+        function stopBroadcast() {
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+                currentStream = null;
+            }
+            
+            if (peer) {
+                peer.destroy();
+                peer = null;
+            }
+            
+            localVideo.srcObject = null;
+            statusEl.textContent = "تم إيقاف البث. يمكنك البدء مرة أخرى.";
+            statusEl.style.color = '#666';
+            startBtn.disabled = false;
+            qualitySelect.disabled = false;
+            stopBtn.disabled = true;
+        }
+
+        // إغلاق البث عند مغادرة الصفحة
+        window.addEventListener('beforeunload', stopBroadcast);
     </script>
 </body>
 </html>
