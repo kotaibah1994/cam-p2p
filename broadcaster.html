@@ -24,14 +24,15 @@
         const localVideo = document.getElementById('localVideo');
 
         // معرف ثابت للباثن (سيتصل به المستقبل)
-        const BROADCASTER_ID = " surveillance_camera_001";
+        const BROADCASTER_ID = "surveillance_camera_001";
 
-        // الاتصال بخادم الإشارة الخاص بـ PeerJS
+        // الاتصال بخادم الإشارة البديل
         const peer = new Peer(BROADCASTER_ID, {
-            host: '0.peerjs.com', // خادم PeerJS المجاني
+            host: 'peerjs-server-0yb0.onrender.com', // خادم إشارة بديل
             port: 443,
             path: '/',
-            debug: 3 // لتسهيل عملية debugging
+            secure: true,
+            debug: 3
         });
 
         // عند الاتصال成功的يخادم الإشارة
@@ -46,11 +47,6 @@
                     localVideo.srcObject = stream;
                     statusEl.textContent = "الكاميرا نشطة وجاهزة للبث. ✅";
                     statusEl.style.color = 'green';
-
-                    // !!! الأهم: لا ننادي أي أحد هنا.
-                    // نحن فقط نجعل "الباثن" متاحاً وينتظر أي مستقبل يتصل به.
-                    // سيتولى خادم الإشارة إخبار المستقبل أن هذا الباثن متاح.
-
                 })
                 .catch(function(err) {
                     statusEl.textContent = "خطأ: لا يمكن الوصول إلى الكاميرا. " + err.message;

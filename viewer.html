@@ -24,13 +24,14 @@
         const remoteVideo = document.getElementById('remoteVideo');
 
         // معرف الباثن الثابت الذي نريد الاتصال به
-        const BROADCASTER_ID = " surveillance_camera_001";
+        const BROADCASTER_ID = "surveillance_camera_001";
 
-        // ننشئ peer للمستقبل. لا نضع ID ثابت له، نترك PeerJS يولد له ID عشوائي تلقائياً.
+        // الاتصال بخادم الإشارة البديل
         const peer = new Peer({
-            host: '0.peerjs.com',
+            host: 'peerjs-server-0yb0.onrender.com', // خادم إشارة بديل
             port: 443,
             path: '/',
+            secure: true,
             debug: 3
         });
 
@@ -41,13 +42,11 @@
 
             // نحاول الاتصال بالباثن باستخدام الـ ID الثابت الخاص به
             const call = peer.call(BROADCASTER_ID);
-            // إذا كان الباثن يبث بالفعل، سيرد على هذه المكالمة
 
             // عندما نستقبل تيار الفيديو من الباثن
             call.on('stream', function(remoteStream) {
                 statusEl.textContent = "متصلة بالبث المباشر! ✅";
                 statusEl.style.color = 'green';
-                // نعرض الفيديو المستلم على عنصر الفيديو
                 remoteVideo.srcObject = remoteStream;
             });
 
