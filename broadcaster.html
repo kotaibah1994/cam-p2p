@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>كاميرا المراقبة - البث</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; margin: 20px; }
+        video { width: 100%; max-width: 400px; border: 1px solid #ccc; border-radius: 5px; }
+        #status { color: #666; margin: 10px; }
+    </style>
+</head>
+<body>
+
+    <h2>وضع البث 🎥</h2>
+    <p>سيتم بث كاميرا الهاتف الآن.</p>
+    <video id="localVideo" autoplay muted playsinline></video>
+    <p id="status">جاري التهيئة...</p>
+
+    <!-- تحميل مكتبة PeerJS من CDN -->
+    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+    <script>
+        // عناصر DOM
+        const statusEl = document.getElementById('status');
+        const localVideo = document.getElementById('localVideo');
+
+        // معرف ثابت للباثن (سيتصل به المستقبل)
+        const BROADCASTER_ID = " surveillance_camera_001";
+
+        // الاتصال بخادم الإشارة الخاص بـ PeerJS
+        const peer = new Peer(BROADCASTER_ID, {
+            host: '0.peerjs.com', // خادم PeerJS المجاني
+            port: 443,
+            path: '/',
+            debug: 3 // لتسهيل عملية debugging
+        });
+
+        // عند الاتصال成功的يخادم الإشارة
+        peer.on('open', function(id) {
+            statusEl.textContent = "جاري تشغيل الكاميرا...";
+            console.log('جهاز البث متصل. الـ ID هو: ', id);
+
+            // طلب الوصول إلى الكاميرا
+            navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+                .then(function(stream) {
+                    // عرض البث على الشاشة للمستخدم (اختياري)
+                    localVideo.srcObject = stream;
+                    statusEl.textContent = "الكاميرا نشطة وجاهزة للبث. ✅";
+                    statusEl.style.color = 'green';
+
+                    // !!! الأهم: لا ننادي أي أحد هنا.
+                    // نحن فقط نجعل "الباثن" متاحاً وينتظر أي مستقبل يتصل به.
+                    // سيتولى خادم الإشارة إخبار المستقبل أن هذا الباثن متاح.
+
+                })
+                .catch(function(err) {
+                    statusEl.textContent = "خطأ: لا يمكن الوصول إلى الكاميرا. " + err.message;
+                    statusEl.style.color = 'red';
+                    console.error('خطأ في الوصول إلى الكاميرا:', err);
+                });
+        });
+
+        peer.on('error', function(err) {
+            console.error('خطأ في PeerJS:', err);
+            statusEl.textContent = "حدث خطأ في الاتصال. يرجى تحديث الصفحة.";
+            statusEl.style.color = 'red';
+        });
+    </script>
+</body>
+</html>

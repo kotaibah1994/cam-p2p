@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>كاميرا المراقبة - المشاهدة</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; margin: 20px; }
+        video { width: 100%; max-width: 600px; border: 1px solid #ccc; border-radius: 5px; }
+        #status { color: #666; margin: 10px; }
+    </style>
+</head>
+<body>
+
+    <h2>وضع المشاهدة 👀</h2>
+    <p>البث المباشر من كاميرا المراقبة:</p>
+    <video id="remoteVideo" autoplay playsinline></video>
+    <p id="status">جاري الاتصال بالكاميرا...</p>
+
+    <!-- تحميل مكتبة PeerJS من CDN -->
+    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+    <script>
+        // عناصر DOM
+        const statusEl = document.getElementById('status');
+        const remoteVideo = document.getElementById('remoteVideo');
+
+        // معرف الباثن الثابت الذي نريد الاتصال به
+        const BROADCASTER_ID = " surveillance_camera_001";
+
+        // ننشئ peer للمستقبل. لا نضع ID ثابت له، نترك PeerJS يولد له ID عشوائي تلقائياً.
+        const peer = new Peer({
+            host: '0.peerjs.com',
+            port: 443,
+            path: '/',
+            debug: 3
+        });
+
+        // عند الاتصال成功的يخادم الإشارة
+        peer.on('open', function(id) {
+            statusEl.textContent = "جاري الاتصال بالكاميرا...";
+            console.log('المستقبل متصل. الـ ID الخاص بي هو: ', id);
+
+            // نحاول الاتصال بالباثن باستخدام الـ ID الثابت الخاص به
+            const call = peer.call(BROADCASTER_ID);
+            // إذا كان الباثن يبث بالفعل، سيرد على هذه المكالمة
+
+            // عندما نستقبل تيار الفيديو من الباثن
+            call.on('stream', function(remoteStream) {
+                statusEl.textContent = "متصلة بالبث المباشر! ✅";
+                statusEl.style.color = 'green';
+                // نعرض الفيديو المستلم على عنصر الفيديو
+                remoteVideo.srcObject = remoteStream;
+            });
+
+            call.on('error', function(err) {
+                statusEl.textContent = "فشل في الاتصال أو استقبال البث.";
+                statusEl.style.color = 'red';
+                console.error('خطأ في المكالمة:', err);
+            });
+        });
+
+        peer.on('error', function(err) {
+            console.error('خطأ في PeerJS:', err);
+            statusEl.textContent = "حدث خطأ في الاتصال. يرجى تحديث الصفحة.";
+            statusEl.style.color = 'red';
+        });
+    </script>
+</body>
+</html>
