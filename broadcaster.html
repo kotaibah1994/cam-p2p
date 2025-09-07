@@ -115,8 +115,9 @@
         const BROADCASTER_ID = "surveillance_camera_001";
         let peer = null;
         let currentStream = null;
-        let connectionTimeout = null;
         let isBroadcasting = false;
+        let reconnectAttempts = 0;
+        const MAX_RECONNECT_ATTEMPTS = 5;
 
         // إعدادات الجودة المختلفة
         const qualityProfiles = {
@@ -191,12 +192,14 @@
             startBtn.disabled = true;
             qualitySelect.disabled = true;
             isBroadcasting = true;
+            reconnectAttempts = 0;
 
             // تحقق من تحميل مكتبة PeerJS
             if (typeof Peer === 'undefined') {
                 updateConnectionStatus('disconnected', '❌ خطأ: لم يتم تحميل مكتبة PeerJS');
                 startBtn.disabled = false;
                 qualitySelect.disabled = false;
+                isBroadcasting = false;
                 return;
             }
 
@@ -205,9 +208,9 @@
                     currentStream = stream;
                     localVideo.srcObject = stream;
                     
-                    // استخدام خادم إشارة بديل
+                    // استخدام خادم إشارة مختلف - خادم PeerJS الرسمي
                     peer = new Peer(BROADCASTER_ID, {
-                        host: 'signaling.herokuapp.com',
+                        host: '0.peerjs.com',
                         port: 443,
                         path: '/',
                         secure: true,
@@ -217,15 +220,18 @@
                                 { 
                                     urls: [
                                         'stun:stun.l.google.com:19302',
-                                        'stun:global.stun.twilio.com:3478'
+                                        'stun:stun1.l.google.com:19302',
+                                        'stun:stun2.l.google.com:19302',
+                                        'stun:stun3.l.google.com:19302',
+                                        'stun:stun4.l.google.com:19302'
                                     ] 
                                 }
                             ]
                         }
                     });
 
-                    // إعدادات لمنع الانقطاع
                     peer.on('open', function(id) {
+                        reconnectAttempts = 0; // إعادة تعيين محاولات إعادة الاتصال
                         updateConnectionStatus('connected', 
                             `✅ <strong>البث نشط!</strong><br>جودة: ${qualityDescriptions[quality]}<br>` +
                             `📍 في انتظار المستقبل...<br>` +
@@ -233,26 +239,20 @@
                         );
                         stopBtn.disabled = false;
                         console.log('✅ Connected to signaling server. ID:', id);
-                        
-                        // إعادة الاتصال التلقائي إذا انقطع
-                        peer.on('disconnected', function() {
-                            updateConnectionStatus('waiting', '⚠️ الاتصال انقطع. جاري إعادة الاتصال...');
-                            setTimeout(() => {
-                                if (isBroadcasting) {
-                                    peer.reconnect();
-                                }
-                            }, 2000);
-                        });
                     });
 
                     peer.on('error', function(err) {
                         console.error('❌ PeerJS error:', err);
+                        
                         if (err.type === 'peer-unavailable') {
                             // هذا الخطأ طبيعي يعني عدم وجود مستقبل بعد
                             updateConnectionStatus('waiting', 
                                 '⏳ في انتظار المستقبل...<br>' +
                                 '👀 افتح صفحة المشاهدة على جهاز آخر'
                             );
+                        } else if (err.type === 'network' || err.type === 'server-error') {
+                            // خطأ في الشبكة أو الخادم - حاول إعادة الاتصال
+                            handleNetworkError();
                         } else {
                             updateConnectionStatus('disconnected', 
                                 `❌ خطأ في الاتصال: ${err.type}<br>جرب تحديث الصفحة`
@@ -261,22 +261,17 @@
                         }
                     });
 
-                    // استقبال أي اتصال من المستقبل
-                    peer.on('connection', function(conn) {
-                        console.log('🔗 received connection from:', conn.peer);
-                        updateConnectionStatus('connected', 
-                            `✅ <strong>مستقبل متصل!</strong><br>` +
-                            `👤 تم الاتصال مع: ${conn.peer}<br>` +
-                            `🎥 البث يعمل بشكل طبيعي`
-                        );
+                    peer.on('disconnected', function() {
+                        updateConnectionStatus('waiting', '⚠️ الاتصال انقطع. جاري إعادة الاتصال...');
+                        handleDisconnection();
                     });
 
-                    // إبقاء الاتصال نشطاً
-                    setInterval(() => {
-                        if (peer && !peer.disconnected) {
-                            peer.socket.send({ type: 'keepalive' });
+                    peer.on('close', function() {
+                        console.log('🔌 Peer connection closed');
+                        if (isBroadcasting) {
+                            handleDisconnection();
                         }
-                    }, 30000); // إرسال إشارة حية كل 30 ثانية
+                    });
 
                 })
                 .catch(function(err) {
@@ -288,6 +283,56 @@
                     isBroadcasting = false;
                     console.error('Error accessing media:', err);
                 });
+        }
+
+        // التعامل مع انقطاع الاتصال
+        function handleDisconnection() {
+            if (!isBroadcasting || reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+                updateConnectionStatus('disconnected', 
+                    '❌ انقطع الاتصال بشكل دائم. يرجى تحديث الصفحة والمحاولة مرة أخرى.'
+                );
+                stopBroadcast();
+                return;
+            }
+
+            reconnectAttempts++;
+            const delay = Math.min(3000 * reconnectAttempts, 15000); // زيادة التأخير تدريجياً
+            
+            updateConnectionStatus('waiting', 
+                `⚠️ محاولة إعادة الاتصال ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}...`
+            );
+            
+            setTimeout(() => {
+                if (isBroadcasting && peer) {
+                    peer.reconnect();
+                }
+            }, delay);
+        }
+
+        // التعامل مع أخطاء الشبكة
+        function handleNetworkError() {
+            if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+                updateConnectionStatus('disconnected', 
+                    '❌ فشل الاتصال بالخادم بعد عدة محاولات. جرب خادمًا آخر.'
+                );
+                stopBroadcast();
+                return;
+            }
+
+            reconnectAttempts++;
+            const delay = 2000 * reconnectAttempts;
+            
+            updateConnectionStatus('waiting', 
+                `🔧 مشكلة في الشبكة. المحاولة ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}...`
+            );
+            
+            setTimeout(() => {
+                if (isBroadcasting) {
+                    // إنشاء اتصال جديد بدلاً من إعادة الاتصال
+                    stopBroadcast();
+                    setTimeout(startBroadcast, 500);
+                }
+            }, delay);
         }
 
         // إيقاف البث
@@ -318,7 +363,6 @@
             if (isBroadcasting) {
                 e.preventDefault();
                 e.returnValue = '⚠️ البث لا يزال نشطاً. هل تريد المغادرة؟';
-                return '⚠️ البث لا يزال نشطاً. هل تريد المغادرة؟';
             }
         });
         
