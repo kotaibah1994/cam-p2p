@@ -4,63 +4,308 @@
     <title>كاميرا المراقبة - المشاهدة</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
-        body { font-family: Arial, sans-serif; text-align: center; margin: 20px; }
-        video { width: 100%; max-width: 600px; border: 1px solid #ccc; border-radius: 5px; }
-        #status { color: #666; margin: 10px; }
+        body { 
+            font-family: Arial, sans-serif; 
+            text-align: center; 
+            margin: 20px; 
+            background-color: #f5f5f5;
+            padding: 10px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        video { 
+            width: 100%; 
+            max-width: 600px; 
+            border: 2px solid #007bff; 
+            border-radius: 10px; 
+            margin: 15px 0; 
+            background-color: #000;
+        }
+        #status { 
+            color: #666; 
+            margin: 15px; 
+            font-size: 16px;
+            padding: 15px;
+            border-radius: 5px;
+            background-color: #f8f9fa;
+            min-height: 60px;
+        }
+        button { 
+            padding: 12px 24px; 
+            margin: 10px; 
+            border-radius: 8px; 
+            border: none;
+            font-size: 16px;
+            cursor: pointer;
+            background: #28a745;
+            color: white;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background: #218838;
+        }
+        button:disabled { 
+            background: #6c757d; 
+            cursor: not-allowed;
+        }
+        .connection-status {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        .connected { background-color: #28a745; }
+        .connecting { background-color: #ffc107; }
+        .disconnected { background-color: #dc3545; }
+        .header {
+            background: linear-gradient(135deg, #007bff 0%, #6610f2 100%);
+            color: white;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        .instructions {
+            background-color: #e9ecef;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            text-align: right;
+        }
     </style>
 </head>
 <body>
+    <div class="container">
+        <div class="header">
+            <h2>👀 وضع المشاهدة - كاميرا المراقبة</h2>
+            <p>البث المباشر من كاميرا المراقبة</p>
+        </div>
+        
+        <div class="instructions">
+            <h3>تعليمات الاستخدام:</h3>
+            <ol>
+                <li>تأكد من أن جهاز البث يعمل وأن الكاميرا نشطة</li>
+                <li>اضغط على زر "الاتصال" أدناه</li>
+                <li>انتظر حتى يتم إنشاء الاتصال (عادةً بضع ثوانٍ)</li>
+                <li>استمتع بمشاهدة البث المباشر!</li>
+            </ol>
+        </div>
+        
+        <div>
+            <button id="connectBtn">🔄 الاتصال بالبث</button>
+            <button id="disconnectBtn" disabled>⏹️ قطع الاتصال</button>
+        </div>
+        
+        <video id="remoteVideo" autoplay playsinline></video>
+        
+        <div id="status">
+            <span class="connection-status disconnected"></span>
+            👉 اضغط على "الاتصال بالبث" لبدء المشاهدة
+        </div>
 
-    <h2>وضع المشاهدة 👀</h2>
-    <p>البث المباشر من كاميرا المراقبة:</p>
-    <video id="remoteVideo" autoplay playsinline></video>
-    <p id="status">جاري الاتصال بالكاميرا...</p>
+        <div style="margin-top: 20px; color: #666; font-size: 14px;">
+            <p>تأكد من أن جهاز البث يعمل على الرابط: <br>
+            <strong>https://اسمك.github.io/cam-p2p/broadcaster.html</strong></p>
+        </div>
+    </div>
 
-    <!-- تحميل مكتبة PeerJS من CDN -->
     <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
     <script>
         // عناصر DOM
         const statusEl = document.getElementById('status');
         const remoteVideo = document.getElementById('remoteVideo');
-
-        // معرف الباثن الثابت الذي نريد الاتصال به
+        const connectBtn = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const connectionStatus = statusEl.querySelector('.connection-status');
+        
+        // معرف الباثن الثابت (يجب أن يتطابق مع المعرف في broadcaster.html)
         const BROADCASTER_ID = "surveillance_camera_001";
+        
+        let peer = null;
+        let currentCall = null;
+        let isConnected = false;
+        let reconnectInterval = null;
 
-        // الاتصال بخادم الإشارة البديل
-        const peer = new Peer({
-            host: 'peerjs-server-0yb0.onrender.com', // خادم إشارة بديل
-            port: 443,
-            path: '/',
-            secure: true,
-            debug: 3
-        });
+        // تحديث حالة الاتصال
+        function updateConnectionStatus(status, message) {
+            connectionStatus.className = 'connection-status ' + status;
+            statusEl.innerHTML = `<span class="connection-status ${status}"></span> ${message}`;
+            
+            // تحديث أزرار التحكم
+            if (status === 'connected') {
+                connectBtn.disabled = true;
+                disconnectBtn.disabled = false;
+            } else {
+                connectBtn.disabled = false;
+                disconnectBtn.disabled = true;
+            }
+        }
 
-        // عند الاتصال成功的يخادم الإشارة
-        peer.on('open', function(id) {
-            statusEl.textContent = "جاري الاتصال بالكاميرا...";
-            console.log('المستقبل متصل. الـ ID الخاص بي هو: ', id);
-
-            // نحاول الاتصال بالباثن باستخدام الـ ID الثابت الخاص به
-            const call = peer.call(BROADCASTER_ID);
-
-            // عندما نستقبل تيار الفيديو من الباثن
-            call.on('stream', function(remoteStream) {
-                statusEl.textContent = "متصلة بالبث المباشر! ✅";
-                statusEl.style.color = 'green';
-                remoteVideo.srcObject = remoteStream;
+        // الاتصال بالباثن
+        function connectToBroadcaster() {
+            updateConnectionStatus('connecting', '🔄 جاري الاتصال بالبث...');
+            connectBtn.disabled = true;
+            
+            // تأكد من تحميل مكتبة PeerJS
+            if (typeof Peer === 'undefined') {
+                updateConnectionStatus('disconnected', '❌ خطأ: لم يتم تحميل مكتبة PeerJS. تحقق من الاتصال بالإنترنت.');
+                connectBtn.disabled = false;
+                return;
+            }
+            
+            // إنشاء اتصال Peer جديد (بدون ID ثابت للمستقبل)
+            peer = new Peer({
+                host: '0.peerjs.com',
+                port: 443,
+                path: '/',
+                secure: true,
+                debug: 2,
+                config: {
+                    iceServers: [
+                        { 
+                            urls: [
+                                'stun:stun.l.google.com:19302',
+                                'stun:stun1.l.google.com:19302',
+                                'stun:stun2.l.google.com:19302',
+                                'stun:stun3.l.google.com:19302'
+                            ] 
+                        }
+                    ]
+                }
             });
 
-            call.on('error', function(err) {
-                statusEl.textContent = "فشل في الاتصال أو استقبال البث.";
-                statusEl.style.color = 'red';
-                console.error('خطأ في المكالمة:', err);
+            // عند فتح الاتصال مع الخادم
+            peer.on('open', function(id) {
+                console.log('✅ Connected to signaling server. My ID:', id);
+                
+                // محاولة الاتصال بالباثن
+                try {
+                    currentCall = peer.call(BROADCASTER_ID);
+                    
+                    // عند استقبال تيار الوسائط
+                    currentCall.on('stream', function(remoteStream) {
+                        console.log('✅ Received remote stream');
+                        remoteVideo.srcObject = remoteStream;
+                        isConnected = true;
+                        updateConnectionStatus('connected', 
+                            '✅ <strong>متصل بالبث!</strong><br>' +
+                            '🎥 البث المباشر يعمل بشكل طبيعي'
+                        );
+                        
+                        // إيقاف أي محاولات إعادة اتصال
+                        if (reconnectInterval) {
+                            clearInterval(reconnectInterval);
+                            reconnectInterval = null;
+                        }
+                    });
+                    
+                    // عند إغلاق الاتصال
+                    currentCall.on('close', function() {
+                        console.log('🔌 Call closed');
+                        handleDisconnection();
+                    });
+                    
+                    // عند حدوث خطأ في المكالمة
+                    currentCall.on('error', function(err) {
+                        console.error('❌ Call error:', err);
+                        handleDisconnection();
+                    });
+                    
+                } catch (error) {
+                    console.error('❌ Error calling peer:', error);
+                    handleDisconnection('❌ خطأ في الاتصال. تأكد من أن الباثن نشط.');
+                }
             });
+
+            // معالجة أخطاء Peer
+            peer.on('error', function(err) {
+                console.error('❌ Peer error:', err);
+                
+                if (err.type === 'peer-unavailable') {
+                    handleDisconnection('⏳ الباثن غير متوفر. تأكد من تشغيل البث أولاً.');
+                } else if (err.type === 'network') {
+                    handleDisconnection('❌ مشكلة في الشبكة. تحقق من اتصال الإنترنت.');
+                } else {
+                    handleDisconnection('❌ خطأ في الاتصال: ' + err.type);
+                }
+            });
+            
+            // عند فقدان الاتصال بالخادم
+            peer.on('disconnected', function() {
+                console.log('🔌 Disconnected from signaling server');
+                handleDisconnection();
+            });
+        }
+
+        // معالجة انقطاع الاتصال
+        function handleDisconnection(message) {
+            isConnected = false;
+            
+            if (currentCall) {
+                currentCall.close();
+                currentCall = null;
+            }
+            
+            if (peer) {
+                peer.destroy();
+                peer = null;
+            }
+            
+            remoteVideo.srcObject = null;
+            
+            const errorMessage = message || '🔌 انقطع الاتصال. اضغط على "الاتصال" للمحاولة مرة أخرى.';
+            updateConnectionStatus('disconnected', errorMessage);
+            
+            // إعادة المحاولة تلقائياً بعد 5 ثوانٍ
+            setTimeout(() => {
+                if (!isConnected) {
+                    connectToBroadcaster();
+                }
+            }, 5000);
+        }
+
+        // قطع الاتصال يدوياً
+        function disconnect() {
+            isConnected = false;
+            
+            if (reconnectInterval) {
+                clearInterval(reconnectInterval);
+                reconnectInterval = null;
+            }
+            
+            if (currentCall) {
+                currentCall.close();
+                currentCall = null;
+            }
+            
+            if (peer) {
+                peer.destroy();
+                peer = null;
+            }
+            
+            remoteVideo.srcObject = null;
+            updateConnectionStatus('disconnected', '⏸️ تم قطع الاتصال. اضغط على "الاتصال" للبدء مرة أخرى.');
+        }
+
+        // إضافة event listeners للأزرار
+        connectBtn.addEventListener('click', connectToBroadcaster);
+        disconnectBtn.addEventListener('click', disconnect);
+
+        // محاولة الاتصال تلقائياً عند تحميل الصفحة
+        window.addEventListener('load', function() {
+            // يمكنك إلغاء التعليق عن السطر التالي لجعل الاتصال يبدأ تلقائياً
+            // connectToBroadcaster();
         });
 
-        peer.on('error', function(err) {
-            console.error('خطأ في PeerJS:', err);
-            statusEl.textContent = "حدث خطأ في الاتصال. يرجى تحديث الصفحة.";
-            statusEl.style.color = 'red';
+        // إغلاق الاتصال عند مغادرة الصفحة
+        window.addEventListener('beforeunload', function() {
+            disconnect();
         });
     </script>
 </body>
