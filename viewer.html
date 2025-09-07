@@ -267,7 +267,7 @@
             peer.on('open', function(id) {
                 console.log('✅ Connected to signaling server. My ID:', id);
                 
-                // محاولة الاتصال بالباثن
+                // محاولة الاتصال بالباثن باستخدام call() بدلاً من connect()
                 try {
                     currentCall = peer.call(BROADCASTER_ID);
                     
@@ -277,6 +277,12 @@
                         remoteVideo.srcObject = remoteStream;
                         isConnected = true;
                         updateStatus('status-connected', '✅ متصل بالبث! البث المباشر يعمل بشكل طبيعي');
+                        
+                        // إيقاف أي محاولات إعادة اتصال
+                        if (checkInterval) {
+                            clearInterval(checkInterval);
+                            checkInterval = null;
+                        }
                     });
                     
                     // عند إغلاق الاتصال
