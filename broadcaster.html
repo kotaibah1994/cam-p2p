@@ -25,6 +25,7 @@
             padding: 10px;
             border-radius: 5px;
             background-color: #f8f9fa;
+            min-height: 60px;
         }
         .control-group { 
             margin: 20px 0; 
@@ -60,6 +61,16 @@
             font-size: 14px;
             margin-top: 5px;
         }
+        .connection-status {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        .connected { background-color: #2ecc71; }
+        .waiting { background-color: #f39c12; }
+        .disconnected { background-color: #e74c3c; }
     </style>
 </head>
 <body>
@@ -84,7 +95,11 @@
     </div>
     
     <video id="localVideo" autoplay muted playsinline></video>
-    <p id="status">👉 اختر الجودة ثم اضغط "بدء البث"</p>
+    
+    <div id="status">
+        <span class="connection-status disconnected"></span>
+        👉 اختر الجودة ثم اضغط "بدء البث"
+    </div>
 
     <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
     <script>
@@ -95,11 +110,13 @@
         const qualityInfo = document.getElementById('qualityInfo');
         const startBtn = document.getElementById('startBtn');
         const stopBtn = document.getElementById('stopBtn');
+        const connectionStatus = statusEl.querySelector('.connection-status');
         
         const BROADCASTER_ID = "surveillance_camera_001";
         let peer = null;
         let currentStream = null;
         let connectionTimeout = null;
+        let isBroadcasting = false;
 
         // إعدادات الجودة المختلفة
         const qualityProfiles = {
@@ -148,6 +165,12 @@
             audioOnly: "الصوت فقط"
         };
 
+        // تحديث حالة الاتصال
+        function updateConnectionStatus(status, message) {
+            connectionStatus.className = 'connection-status ' + status;
+            statusEl.innerHTML = `<span class="connection-status ${status}"></span> ${message}`;
+        }
+
         // الأحداث
         startBtn.addEventListener('click', startBroadcast);
         stopBtn.addEventListener('click', stopBroadcast);
@@ -164,15 +187,14 @@
             const quality = qualitySelect.value;
             const constraints = qualityProfiles[quality];
             
-            statusEl.textContent = "🔄 جاري تشغيل الكاميرا والصوت...";
-            statusEl.style.color = '#666';
+            updateConnectionStatus('waiting', '🔄 جاري تشغيل الكاميرا والصوت...');
             startBtn.disabled = true;
             qualitySelect.disabled = true;
+            isBroadcasting = true;
 
             // تحقق من تحميل مكتبة PeerJS
             if (typeof Peer === 'undefined') {
-                statusEl.textContent = '❌ خطأ: لم يتم تحميل مكتبة PeerJS. تحقق من الاتصال بالإنترنت.';
-                statusEl.style.color = 'red';
+                updateConnectionStatus('disconnected', '❌ خطأ: لم يتم تحميل مكتبة PeerJS');
                 startBtn.disabled = false;
                 qualitySelect.disabled = false;
                 return;
@@ -183,9 +205,9 @@
                     currentStream = stream;
                     localVideo.srcObject = stream;
                     
-                    // الحل 2: استخدام خادم إشارة بديل
+                    // استخدام خادم إشارة بديل
                     peer = new Peer(BROADCASTER_ID, {
-                        host: 'signaling.herokuapp.com',  // الخادم البديل
+                        host: 'signaling.herokuapp.com',
                         port: 443,
                         path: '/',
                         secure: true,
@@ -202,54 +224,75 @@
                         }
                     });
 
-                    // إضافة timeout لمنع التجمد
-                    connectionTimeout = setTimeout(() => {
-                        if (peer && !peer.disconnected) {
-                            statusEl.innerHTML = '⏰ <strong>مهلة الاتصال انتهت</strong><br>الخادم لا يستجيب. جرب تحديث الصفحة.';
-                            statusEl.style.color = 'orange';
-                            stopBroadcast();
-                        }
-                    }, 15000); // 15 ثانية
-
+                    // إعدادات لمنع الانقطاع
                     peer.on('open', function(id) {
-                        clearTimeout(connectionTimeout);
-                        statusEl.innerHTML = "✅ <strong>البث نشط!</strong><br>جودة: " + qualityDescriptions[quality] + "<br>جاهز للاستقبال";
-                        statusEl.style.color = 'green';
+                        updateConnectionStatus('connected', 
+                            `✅ <strong>البث نشط!</strong><br>جودة: ${qualityDescriptions[quality]}<br>` +
+                            `📍 في انتظار المستقبل...<br>` +
+                            `⏳ البث سيستمر حتى إيقافه يدوياً`
+                        );
                         stopBtn.disabled = false;
                         console.log('✅ Connected to signaling server. ID:', id);
+                        
+                        // إعادة الاتصال التلقائي إذا انقطع
+                        peer.on('disconnected', function() {
+                            updateConnectionStatus('waiting', '⚠️ الاتصال انقطع. جاري إعادة الاتصال...');
+                            setTimeout(() => {
+                                if (isBroadcasting) {
+                                    peer.reconnect();
+                                }
+                            }, 2000);
+                        });
                     });
 
                     peer.on('error', function(err) {
-                        clearTimeout(connectionTimeout);
                         console.error('❌ PeerJS error:', err);
-                        statusEl.innerHTML = "❌ <strong>خطأ في الاتصال:</strong> " + err.type + "<br>جرب تحديث الصفحة";
-                        statusEl.style.color = 'red';
-                        stopBroadcast();
+                        if (err.type === 'peer-unavailable') {
+                            // هذا الخطأ طبيعي يعني عدم وجود مستقبل بعد
+                            updateConnectionStatus('waiting', 
+                                '⏳ في انتظار المستقبل...<br>' +
+                                '👀 افتح صفحة المشاهدة على جهاز آخر'
+                            );
+                        } else {
+                            updateConnectionStatus('disconnected', 
+                                `❌ خطأ في الاتصال: ${err.type}<br>جرب تحديث الصفحة`
+                            );
+                            stopBroadcast();
+                        }
                     });
 
-                    peer.on('disconnected', function() {
-                        statusEl.textContent = "⚠️ فقدان الاتصال. جاري إعادة الاتصال تلقائياً...";
-                        statusEl.style.color = 'orange';
+                    // استقبال أي اتصال من المستقبل
+                    peer.on('connection', function(conn) {
+                        console.log('🔗 received connection from:', conn.peer);
+                        updateConnectionStatus('connected', 
+                            `✅ <strong>مستقبل متصل!</strong><br>` +
+                            `👤 تم الاتصال مع: ${conn.peer}<br>` +
+                            `🎥 البث يعمل بشكل طبيعي`
+                        );
                     });
 
-                    peer.on('close', function() {
-                        console.log('🔌 Peer connection closed');
-                    });
+                    // إبقاء الاتصال نشطاً
+                    setInterval(() => {
+                        if (peer && !peer.disconnected) {
+                            peer.socket.send({ type: 'keepalive' });
+                        }
+                    }, 30000); // إرسال إشارة حية كل 30 ثانية
 
                 })
                 .catch(function(err) {
-                    clearTimeout(connectionTimeout);
-                    statusEl.innerHTML = "❌ <strong>خطأ:</strong> " + err.name + "<br>" + err.message;
-                    statusEl.style.color = 'red';
+                    updateConnectionStatus('disconnected', 
+                        `❌ <strong>خطأ:</strong> ${err.name}<br>${err.message}`
+                    );
                     startBtn.disabled = false;
                     qualitySelect.disabled = false;
+                    isBroadcasting = false;
                     console.error('Error accessing media:', err);
                 });
         }
 
         // إيقاف البث
         function stopBroadcast() {
-            clearTimeout(connectionTimeout);
+            isBroadcasting = false;
             
             if (currentStream) {
                 currentStream.getTracks().forEach(track => track.stop());
@@ -262,15 +305,23 @@
             }
             
             localVideo.srcObject = null;
-            statusEl.innerHTML = "⏸️ <strong>تم إيقاف البث</strong><br>يمكنك البدء مرة أخرى";
-            statusEl.style.color = '#666';
+            updateConnectionStatus('disconnected', 
+                '⏸️ <strong>تم إيقاف البث</strong><br>يمكنك البدء مرة أخرى'
+            );
             startBtn.disabled = false;
             qualitySelect.disabled = false;
             stopBtn.disabled = true;
         }
 
         // إغلاق البث عند مغادرة الصفحة
-        window.addEventListener('beforeunload', stopBroadcast);
+        window.addEventListener('beforeunload', function(e) {
+            if (isBroadcasting) {
+                e.preventDefault();
+                e.returnValue = '⚠️ البث لا يزال نشطاً. هل تريد المغادرة؟';
+                return '⚠️ البث لا يزال نشطاً. هل تريد المغادرة؟';
+            }
+        });
+        
         window.addEventListener('pagehide', stopBroadcast);
         
         // تهيئة أولية
