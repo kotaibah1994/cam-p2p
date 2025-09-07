@@ -43,27 +43,52 @@
             border: none;
             font-size: 16px;
             cursor: pointer;
+            transition: all 0.3s;
+        }
+        #connectBtn {
             background: #28a745;
             color: white;
-            transition: background 0.3s;
         }
-        button:hover {
+        #connectBtn:hover {
             background: #218838;
+        }
+        #disconnectBtn {
+            background: #dc3545;
+            color: white;
+        }
+        #disconnectBtn:hover {
+            background: #c82333;
         }
         button:disabled { 
             background: #6c757d; 
             cursor: not-allowed;
         }
-        .connection-status {
-            display: inline-block;
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            margin-right: 8px;
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 15px 0;
         }
-        .connected { background-color: #28a745; }
-        .connecting { background-color: #ffc107; }
-        .disconnected { background-color: #dc3545; }
+        .status-dot {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            margin-right: 10px;
+        }
+        .status-checking {
+            background-color: #17a2b8;
+            animation: pulse 1.5s infinite;
+        }
+        .status-available {
+            background-color: #28a745;
+        }
+        .status-unavailable {
+            background-color: #dc3545;
+        }
+        .status-connected {
+            background-color: #28a745;
+            animation: pulse 1s infinite;
+        }
         .header {
             background: linear-gradient(135deg, #007bff 0%, #6610f2 100%);
             color: white;
@@ -78,6 +103,11 @@
             margin: 15px 0;
             text-align: right;
         }
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
     </style>
 </head>
 <body>
@@ -91,23 +121,23 @@
             <h3>تعليمات الاستخدام:</h3>
             <ol>
                 <li>تأكد من أن جهاز البث يعمل وأن الكاميرا نشطة</li>
-                <li>اضغط على زر "الاتصال" أدناه</li>
-                <li>انتظر حتى يتم إنشاء الاتصال (عادةً بضع ثوانٍ)</li>
+                <li>سيتحقق النظام تلقائيًا من وجود البث</li>
+                <li>اضغط على "الاتصال" عندما تكون الإشارة خضراء</li>
                 <li>استمتع بمشاهدة البث المباشر!</li>
             </ol>
         </div>
         
+        <div class="status-indicator">
+            <div id="statusDot" class="status-dot status-checking"></div>
+            <span id="statusText">جاري التحقق من حالة البث...</span>
+        </div>
+        
         <div>
-            <button id="connectBtn">🔄 الاتصال بالبث</button>
+            <button id="connectBtn" disabled>🔄 الاتصال بالبث</button>
             <button id="disconnectBtn" disabled>⏹️ قطع الاتصال</button>
         </div>
         
         <video id="remoteVideo" autoplay playsinline></video>
-        
-        <div id="status">
-            <span class="connection-status disconnected"></span>
-            👉 اضغط على "الاتصال بالبث" لبدء المشاهدة
-        </div>
 
         <div style="margin-top: 20px; color: #666; font-size: 14px;">
             <p>تأكد من أن جهاز البث يعمل على الرابط: <br>
@@ -118,11 +148,11 @@
     <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
     <script>
         // عناصر DOM
-        const statusEl = document.getElementById('status');
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
         const remoteVideo = document.getElementById('remoteVideo');
         const connectBtn = document.getElementById('connectBtn');
         const disconnectBtn = document.getElementById('disconnectBtn');
-        const connectionStatus = statusEl.querySelector('.connection-status');
         
         // معرف الباثن الثابت (يجب أن يتطابق مع المعرف في broadcaster.html)
         const BROADCASTER_ID = "surveillance_camera_001";
@@ -130,36 +160,90 @@
         let peer = null;
         let currentCall = null;
         let isConnected = false;
-        let reconnectInterval = null;
+        let isBroadcasterAvailable = false;
+        let checkInterval = null;
+        const CHECK_INTERVAL = 5000; // التحقق كل 5 ثواني
 
-        // تحديث حالة الاتصال
-        function updateConnectionStatus(status, message) {
-            connectionStatus.className = 'connection-status ' + status;
-            statusEl.innerHTML = `<span class="connection-status ${status}"></span> ${message}`;
+        // تحديث حالة المؤشر
+        function updateStatus(status, message) {
+            // إزالة جميع classes الحالة
+            statusDot.classList.remove('status-checking', 'status-available', 'status-unavailable', 'status-connected');
+            
+            // إضافة class الحالة الجديدة
+            statusDot.classList.add(status);
+            statusText.textContent = message;
             
             // تحديث أزرار التحكم
-            if (status === 'connected') {
+            if (status === 'status-available') {
+                connectBtn.disabled = false;
+                disconnectBtn.disabled = true;
+            } else if (status === 'status-connected') {
                 connectBtn.disabled = true;
                 disconnectBtn.disabled = false;
             } else {
-                connectBtn.disabled = false;
+                connectBtn.disabled = true;
                 disconnectBtn.disabled = true;
             }
         }
 
+        // التحقق من وجود الباثن
+        function checkBroadcasterAvailability() {
+            if (isConnected) return; // لا داعي للتحقق إذا كنا متصلين بالفعل
+            
+            // إنشاء اتصال مؤقت للتحقق من وجود الباثن
+            const tempPeer = new Peer({
+                host: '0.peerjs.com',
+                port: 443,
+                path: '/',
+                secure: true,
+                config: {
+                    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                }
+            });
+
+            tempPeer.on('open', function() {
+                // محاولة الاتصال بالباثن للتحقق من وجوده
+                const tempConn = tempPeer.connect(BROADCASTER_ID, { reliable: true });
+                
+                tempConn.on('open', function() {
+                    // الباثن متاح
+                    isBroadcasterAvailable = true;
+                    updateStatus('status-available', '✅ الباثن متاح! اضغط على "الاتصال" للبدء.');
+                    tempConn.close();
+                    tempPeer.destroy();
+                });
+                
+                tempConn.on('error', function() {
+                    // الباثن غير متاح
+                    isBroadcasterAvailable = false;
+                    updateStatus('status-unavailable', '❌ الباثن غير متاح. جاري إعادة المحاولة...');
+                    tempPeer.destroy();
+                });
+                
+                //设定超时
+                setTimeout(function() {
+                    if (!isBroadcasterAvailable) {
+                        tempPeer.destroy();
+                    }
+                }, 3000);
+            });
+
+            tempPeer.on('error', function() {
+                isBroadcasterAvailable = false;
+                updateStatus('status-unavailable', '❌ خطأ في الاتصال بالخادم. جاري إعادة المحاولة...');
+            });
+        }
+
         // الاتصال بالباثن
         function connectToBroadcaster() {
-            updateConnectionStatus('connecting', '🔄 جاري الاتصال بالبث...');
-            connectBtn.disabled = true;
-            
-            // تأكد من تحميل مكتبة PeerJS
-            if (typeof Peer === 'undefined') {
-                updateConnectionStatus('disconnected', '❌ خطأ: لم يتم تحميل مكتبة PeerJS. تحقق من الاتصال بالإنترنت.');
-                connectBtn.disabled = false;
+            if (!isBroadcasterAvailable) {
+                updateStatus('status-unavailable', '❌ الباثن غير متاح. لا يمكن الاتصال.');
                 return;
             }
             
-            // إنشاء اتصال Peer جديد (بدون ID ثابت للمستقبل)
+            updateStatus('status-checking', '🔄 جاري الاتصال بالبث...');
+            
+            // إنشاء اتصال Peer جديد
             peer = new Peer({
                 host: '0.peerjs.com',
                 port: 443,
@@ -172,8 +256,7 @@
                             urls: [
                                 'stun:stun.l.google.com:19302',
                                 'stun:stun1.l.google.com:19302',
-                                'stun:stun2.l.google.com:19302',
-                                'stun:stun3.l.google.com:19302'
+                                'stun:stun2.l.google.com:19302'
                             ] 
                         }
                     ]
@@ -193,16 +276,7 @@
                         console.log('✅ Received remote stream');
                         remoteVideo.srcObject = remoteStream;
                         isConnected = true;
-                        updateConnectionStatus('connected', 
-                            '✅ <strong>متصل بالبث!</strong><br>' +
-                            '🎥 البث المباشر يعمل بشكل طبيعي'
-                        );
-                        
-                        // إيقاف أي محاولات إعادة اتصال
-                        if (reconnectInterval) {
-                            clearInterval(reconnectInterval);
-                            reconnectInterval = null;
-                        }
+                        updateStatus('status-connected', '✅ متصل بالبث! البث المباشر يعمل بشكل طبيعي');
                     });
                     
                     // عند إغلاق الاتصال
@@ -228,18 +302,12 @@
                 console.error('❌ Peer error:', err);
                 
                 if (err.type === 'peer-unavailable') {
-                    handleDisconnection('⏳ الباثن غير متوفر. تأكد من تشغيل البث أولاً.');
+                    handleDisconnection('⏳ الباثن غير متوفر. جاري إعادة المحاولة...');
                 } else if (err.type === 'network') {
                     handleDisconnection('❌ مشكلة في الشبكة. تحقق من اتصال الإنترنت.');
                 } else {
                     handleDisconnection('❌ خطأ في الاتصال: ' + err.type);
                 }
-            });
-            
-            // عند فقدان الاتصال بالخادم
-            peer.on('disconnected', function() {
-                console.log('🔌 Disconnected from signaling server');
-                handleDisconnection();
             });
         }
 
@@ -259,25 +327,38 @@
             
             remoteVideo.srcObject = null;
             
-            const errorMessage = message || '🔌 انقطع الاتصال. اضغط على "الاتصال" للمحاولة مرة أخرى.';
-            updateConnectionStatus('disconnected', errorMessage);
+            if (message) {
+                updateStatus('status-unavailable', message);
+            } else {
+                updateStatus('status-unavailable', '🔌 انقطع الاتصال. جاري إعادة التحقق من الباثن...');
+            }
             
-            // إعادة المحاولة تلقائياً بعد 5 ثوانٍ
-            setTimeout(() => {
-                if (!isConnected) {
-                    connectToBroadcaster();
-                }
-            }, 5000);
+            // استئناف التحقق من الباثن
+            startChecking();
+        }
+
+        // بدء التحقق الدوري من الباثن
+        function startChecking() {
+            if (checkInterval) {
+                clearInterval(checkInterval);
+            }
+            updateStatus('status-checking', '🔍 جاري التحقق من وجود البث...');
+            checkBroadcasterAvailability(); // التحقق فوراً
+            checkInterval = setInterval(checkBroadcasterAvailability, CHECK_INTERVAL);
+        }
+
+        // وقف التحقق الدوري
+        function stopChecking() {
+            if (checkInterval) {
+                clearInterval(checkInterval);
+                checkInterval = null;
+            }
         }
 
         // قطع الاتصال يدوياً
         function disconnect() {
             isConnected = false;
-            
-            if (reconnectInterval) {
-                clearInterval(reconnectInterval);
-                reconnectInterval = null;
-            }
+            stopChecking();
             
             if (currentCall) {
                 currentCall.close();
@@ -290,17 +371,19 @@
             }
             
             remoteVideo.srcObject = null;
-            updateConnectionStatus('disconnected', '⏸️ تم قطع الاتصال. اضغط على "الاتصال" للبدء مرة أخرى.');
+            updateStatus('status-unavailable', '⏸️ تم قطع الاتصال. جاري إعادة التحقق من الباثن...');
+            
+            // استئناف التحقق من الباثن
+            startChecking();
         }
 
         // إضافة event listeners للأزرار
         connectBtn.addEventListener('click', connectToBroadcaster);
         disconnectBtn.addEventListener('click', disconnect);
 
-        // محاولة الاتصال تلقائياً عند تحميل الصفحة
+        // بدء التحقق التلقائي عند تحميل الصفحة
         window.addEventListener('load', function() {
-            // يمكنك إلغاء التعليق عن السطر التالي لجعل الاتصال يبدأ تلقائياً
-            // connectToBroadcaster();
+            startChecking();
         });
 
         // إغلاق الاتصال عند مغادرة الصفحة
